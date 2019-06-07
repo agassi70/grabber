@@ -4,7 +4,12 @@ const request = require('request');
 const jar = request.jar();
 
 const apiUrl = 'https://precisionrun.zingfit.com/reserve/index.cfm?';
-const authForm = {action: 'Account.doLogin', username: 'a.baditsa@gmail.com', password: '15021988' };
+const authForm = {
+  action: 'Account.doLogin',
+  username: 'a.baditsa@gmail.com',
+  password: '15021988',
+  rememberme: true,
+};
 const qsSchedule = {
   action: 'Reserve.chooseClass',
   site: 1,
@@ -19,15 +24,13 @@ const chooseSpot = {
   parentUrl: 'https://precisionrun.com/reserve#/choosespot/classid/'
 };
 
-
 const getCookie = new Promise((resolve, reject) => {
-  request.post({url: apiUrl, form: authForm, jar }, (error, response, body) => {
+  request({method: 'POST', url: apiUrl, form: authForm, jar}, (error, response, body) => {
     if (error) {
       reject(error);
     } else {
-      console.log(response.headers);
-      // const authCookie = request.cookie('zingfitAuthenticated=true');
-      // jar.setCookie(authCookie, apiUrl);
+      const cookie = request.cookie('zingfitAuthenticated=true');
+      jar.setCookie(cookie, apiUrl);
       resolve();
     }
   });
@@ -50,12 +53,11 @@ const getSchedule = new Promise((resolve, reject) => {
           instructorId: block.data('instructor'),
           instructorName: block.children('.scheduleInstruc').text(),
           time: block.children('.scheduleTime').text(),
-          href: block.children('a').attr('href'),
         };
         result.push(cell);
       });
 
-      console.log(result);
+     // console.log(result);
       resolve(result);
     } else {
       reject(error);
@@ -63,17 +65,28 @@ const getSchedule = new Promise((resolve, reject) => {
   });
 });
 
-getCookie.then(() => getSchedule)
-  .then(result => {
-    // console.log({...chooseSpot, classid: result[0].classId, parentUrl: `${chooseSpot.parentUrl}${result[0].classId}`});
+const getSpot = (classid) => new Promise((resolve, reject) => {
+  request({url: apiUrl, qs: {action: 'Reserve.chooseSpot', classid}, jar}, (error, response, body) => {
+    if (!error) {
+      const $page = cheerio.load(body);
+      resolve({
+        available: $page('#spotwrapper a.spotcell').contents().length,
+        booked: $page('#spotwrapper span.spotcell').contents().length,
+      });
+    } else {
+      reject(error);
+    }
+  });
+});
 
-    request({url: apiUrl, qs: {...chooseSpot, classid: result[0].classId, parentUrl: `${chooseSpot.parentUrl}${result[0].classId}`}, jar}, (error, response, body) => {
-      if (!error) {
-        const cookies = jar.getCookieString(apiUrl);
-        console.log(cookies);
-        const $page = cheerio.load(body);
-       /// console.log($page.html());
-      }
-    });
+getCookie
+  .then(() => getSchedule)
+  .then((result) => {
+    const queries = result.map(cell => getSpot(cell.classId));
+    Promise.all(queries)
+      .then(quantities => {
+        const finResult = result.map((cell, idx) => ({...cell, ...quantities[idx]}));
+        console.log(finResult);
+      });
   })
   .catch(err => console.log("Произошла ошибка: " + err));
